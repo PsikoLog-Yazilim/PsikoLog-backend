@@ -7,24 +7,27 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = "PsikoLogJWT";
 
 // JWT
-function createToken(userId) {
-  const payload = { userId };
+function createToken(userId, userType) {
+  const payload = { userId, userType };
   const secretKey = JWT_SECRET; // JWT'nin imzalamak için kullanacağınız gizli anahtar
-  const options = { expiresIn: '1h' }; // Token süresi (örnekte 1 saat)
+  const options = { expiresIn: '5h' }; // Token süresi (örnekte 1 saat)
 
   return jwt.sign(payload, secretKey, options);
 }
 
 // Token Doğrula
 function verifyToken(req, res, next) {
-  const token = req.headers.authorization;
+  const token = req.headers.authorization.split(' ')[1];
+  console.log("verifyToken: " + token);
 
   if (!token) {
+    console.log("Token bulunamadi.");
     return res.status(401).json({ success: false, message: 'Token bulunamadı.' });
   }
 
   jwt.verify(token, JWT_SECRET, (error, decoded) => {
     if (error) {
+      console.log("Gecersiz token.");
       return res.status(401).json({ success: false, message: 'Geçersiz token.' });
     }
 
@@ -57,15 +60,6 @@ function createTables() {
     password VARCHAR(255) NOT NULL
   )`;
 
-  // Psikolog tablosunu oluşturma sorgusu
-  const createPsychologistTableQuery = `CREATE TABLE IF NOT EXISTS psychologists (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    surname VARCHAR(255) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    password VARCHAR(255) NOT NULL
-  )`;
-
   // Hasta tablosunu oluştur
   pool.query(createPatientTableQuery, (error, results) => {
     if (error) {
@@ -75,6 +69,15 @@ function createTables() {
     }
   });
 
+   // Psikolog tablosunu oluşturma sorgusu
+   const createPsychologistTableQuery = `CREATE TABLE IF NOT EXISTS psychologists (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    surname VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL
+  )`;
+
   // Psikolog tablosunu oluştur
   pool.query(createPsychologistTableQuery, (error, results) => {
     if (error) {
@@ -83,6 +86,28 @@ function createTables() {
       console.log('Psikolog tablosu oluşturuldu veya zaten mevcut');
     }
   });
+
+ // Randevu tablosunu oluşturma sorgusu
+const createAppointmentTableQuery = `CREATE TABLE IF NOT EXISTS appointments (
+  id SERIAL PRIMARY KEY,
+  patient_id INTEGER NOT NULL,
+  psychologist_id INTEGER NOT NULL,
+  appointment_date DATE NOT NULL,
+  appointment_time TIME NOT NULL,
+  status VARCHAR(255) NOT NULL,
+  FOREIGN KEY (patient_id) REFERENCES patients (id) ON DELETE CASCADE,
+  FOREIGN KEY (psychologist_id) REFERENCES psychologists (id) ON DELETE CASCADE
+);`;
+
+// Randevu tablosunu oluştur
+pool.query(createAppointmentTableQuery, (error, results) => {
+  if (error) {
+    console.error('Hata:', error);
+  } else {
+    console.log('Randevu tablosu oluşturuldu veya zaten mevcut');
+  }
+});
+
 }
 
 // JSON veri analizini etkinleştir
@@ -134,7 +159,7 @@ app.post('/patient/login', (req, res) => {
       if (results.rowCount > 0) {
         // Kullanıcı bulundu, giriş başarılı
         const userId = results.rows[0].id;
-        const token = createToken(userId);
+        const token = createToken(userId, "patient");
 
         res.status(200).json({ success: true, token: token, message: 'Kullanıcı başarıyla giriş yaptı.' });
       } else {
@@ -179,7 +204,7 @@ app.post('/psychologist/login', (req, res) => {
       if (results.rowCount > 0) {
         // Kullanıcı bulundu, giriş başarılı
         const userId = results.rows[0].id;
-        const token = createToken(userId);
+        const token = createToken(userId, "psychologist");
 
         res.status(200).json({ success: true, token: token, message: 'Kullanıcı başarıyla giriş yaptı.' });
       } else {
@@ -202,6 +227,87 @@ app.get('/psychologists', (req, res) => {
       res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
     } else {
       res.status(200).json({ success: true, psychologists: results.rows });
+    }
+  });
+});
+
+// Psikolog profil endpoint'i
+app.get('/psychologists/:id', (req, res) => {
+  const id = req.params.id;
+
+  // PostgreSQL sorgusu
+  const query = 'SELECT * FROM psychologists WHERE id = $1';
+
+  // Hastanın randevu taleplerini getir
+  pool.query(query, [id], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(200).json({ success: true, psychologist: results.rows[0] });
+    }
+  });
+});
+
+
+// Randevu talebi oluşturma endpoint'i
+app.post('/appointments', verifyToken, (req, res) => {
+  const { patientId, psychologistId, appointmentDate, appointmentTime } = req.body;
+
+  // PostgreSQL sorgusu
+  const query = 'INSERT INTO appointments (patient_id, psychologist_id, appointment_date, appointment_time, status) VALUES ($1, $2, $3, $4, $5)';
+
+  // Randevu talebini veritabanına ekle
+  pool.query(query, [patientId, psychologistId, appointmentDate, appointmentTime, 'pending'], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(201).json({ success: true, message: 'Randevu talebi başarıyla oluşturuldu.' });
+    }
+  });
+});
+
+// Hastanın randevu taleplerini getirme endpoint'i
+app.get('/patient/:id/appointments', verifyToken, (req, res) => {
+  const patientId = req.params.id;
+
+  // PostgreSQL sorgusu
+  const query = `SELECT appointments.id, appointments.status, appointments.appointment_date, appointments.appointment_time, psychologists.name, psychologists.surname, 
+  psychologists.email FROM appointments 
+  INNER JOIN psychologists ON appointments.psychologist_id = psychologists.id 
+  WHERE appointments.patient_id = $1`;
+
+  // Hastanın randevu taleplerini getir
+  pool.query(query, [patientId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(200).json({ success: true, appointments: results.rows });
+    }
+  });
+});
+
+// Hastanın randevu taleplerini iptal etme endpoint'i
+app.delete('/appointments/:appointmentId', verifyToken, (req, res) => {
+  const appointmentId = req.params.appointmentId;
+  const patientId = req.userId;
+
+  // PostgreSQL sorgusu
+  const query = 'DELETE FROM appointments WHERE id = $1 AND patient_id = $2';
+
+  // Randevu talebini iptal et
+  pool.query(query, [appointmentId, patientId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      if (results.rowCount > 0) {
+        res.status(200).json({ success: true, message: 'Randevu talebi başarıyla iptal edildi.' });
+      } else {
+        res.status(404).json({ success: false, message: 'Belirtilen randevu talebi bulunamadı.' });
+      }
     }
   });
 });
