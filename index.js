@@ -69,8 +69,8 @@ function createTables() {
     }
   });
 
-   // Psikolog tablosunu oluşturma sorgusu
-   const createPsychologistTableQuery = `CREATE TABLE IF NOT EXISTS psychologists (
+  // Psikolog tablosunu oluşturma sorgusu
+  const createPsychologistTableQuery = `CREATE TABLE IF NOT EXISTS psychologists (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     surname VARCHAR(255) NOT NULL,
@@ -87,8 +87,8 @@ function createTables() {
     }
   });
 
- // Randevu tablosunu oluşturma sorgusu
-const createAppointmentTableQuery = `CREATE TABLE IF NOT EXISTS appointments (
+  // Randevu tablosunu oluşturma sorgusu
+  const createAppointmentTableQuery = `CREATE TABLE IF NOT EXISTS appointments (
   id SERIAL PRIMARY KEY,
   patient_id INTEGER NOT NULL,
   psychologist_id INTEGER NOT NULL,
@@ -99,14 +99,26 @@ const createAppointmentTableQuery = `CREATE TABLE IF NOT EXISTS appointments (
   FOREIGN KEY (psychologist_id) REFERENCES psychologists (id) ON DELETE CASCADE
 );`;
 
-// Randevu tablosunu oluştur
-pool.query(createAppointmentTableQuery, (error, results) => {
-  if (error) {
-    console.error('Hata:', error);
-  } else {
-    console.log('Randevu tablosu oluşturuldu veya zaten mevcut');
-  }
-});
+  // Randevu tablosunu oluştur
+  pool.query(createAppointmentTableQuery, (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+    } else {
+      console.log('Randevu tablosu oluşturuldu veya zaten mevcut');
+    }
+  });
+
+  // Yorumlar tablosunu oluşturma sorgusu
+  const createCommentTableQuery = `CREATE TABLE IF NOT EXISTS comments (id SERIAL PRIMARY KEY, patient_id INTEGER NOT NULL, psychologist_id INTEGER NOT NULL, comment_text TEXT NOT NULL, FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE, FOREIGN KEY(psychologist_id) REFERENCES psychologists(id) ON DELETE CASCADE);`;
+
+  // Yorumlar tablosunu oluştur
+  pool.query(createCommentTableQuery, (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+    } else {
+      console.log('Yorumlar tablosu oluşturuldu veya zaten mevcut');
+    }
+  });
 
 }
 
@@ -159,7 +171,7 @@ app.post('/patient/login', (req, res) => {
       if (results.rowCount > 0) {
         // Kullanıcı bulundu, giriş başarılı
         const userId = results.rows[0].id;
-        const token = createToken(userId, "patient");
+        const token = createToken(userId, "Patient");
 
         res.status(200).json({ success: true, token: token, message: 'Kullanıcı başarıyla giriş yaptı.' });
       } else {
@@ -204,7 +216,7 @@ app.post('/psychologist/login', (req, res) => {
       if (results.rowCount > 0) {
         // Kullanıcı bulundu, giriş başarılı
         const userId = results.rows[0].id;
-        const token = createToken(userId, "psychologist");
+        const token = createToken(userId, "Psychologist");
 
         res.status(200).json({ success: true, token: token, message: 'Kullanıcı başarıyla giriş yaptı.' });
       } else {
@@ -365,7 +377,7 @@ app.patch('/psychologist/appointments/:id/decline', verifyToken, (req, res) => {
   // PostgreSQL sorgusu
   const query = 'UPDATE appointments SET status = $1 WHERE id = $2 AND psychologist_id = $3';
 
-  // Randevu talebini iptal et
+  // Randevu talebini reddet
   pool.query(query, ['declined', appointmentId, psychologistId], (error, results) => {
     if (error) {
       console.error(error);
@@ -376,6 +388,45 @@ app.patch('/psychologist/appointments/:id/decline', verifyToken, (req, res) => {
       } else {
         res.status(404).json({ success: false, message: 'Belirtilen randevu talebi bulunamadı.' });
       }
+    }
+  });
+});
+
+// Psikoloğa yorum yapma endpoint'i
+app.post('/psychologist/:id/comment', verifyToken, (req, res) => {
+  const patientId = req.userId;
+  const psychologistId = req.params.id;
+  const commentText = req.body.commentText;
+  console.log("comment text: " + commentText);
+
+  // PostgreSQL sorgusu
+  const query = 'INSERT INTO comments (patient_id, psychologist_id, comment_text) VALUES ($1, $2, $3)';
+
+  // Yorumu veritabanına ekle
+  pool.query(query, [patientId, psychologistId, commentText], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(201).json({ success: true, message: 'Yorum başarıyla eklendi.' });
+    }
+  });
+});
+
+// Psikoloğun yorumlarını getirme endpoint'i
+app.get('/psychologist/:id/comments', (req, res) => {
+  const psychologistId = req.params.id;
+
+  // PostgreSQL sorgusu
+  const query = 'SELECT comments.*, patients.name, patients.surname FROM comments INNER JOIN patients ON comments.patient_id = patients.id WHERE comments.psychologist_id = $1';
+
+  // Yorumları veritabanından getir
+  pool.query(query, [psychologistId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(200).json({ success: true, comments: results.rows });
     }
   });
 });
