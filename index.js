@@ -312,6 +312,74 @@ app.delete('/appointments/:appointmentId', verifyToken, (req, res) => {
   });
 });
 
+// Psikologun randevu taleplerini getirme endpoint'i
+app.get('/psychologist/appointments', verifyToken, (req, res) => {
+  const psychologistId = req.userId;
+
+  // PostgreSQL sorgusu
+  const query = `SELECT appointments.id, appointments.status, appointments.appointment_date, appointments.appointment_time, patients.name, patients.surname, 
+  patients.email FROM appointments 
+  INNER JOIN patients ON appointments.patient_id = patients.id 
+  WHERE appointments.psychologist_id = $1`;
+
+
+  // Psikologun randevu taleplerini getir
+  pool.query(query, [psychologistId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(200).json({ success: true, appointments: results.rows });
+    }
+  });
+});
+
+// Psikologun randevu taleplerini onaylama endpoint'i
+app.patch('/psychologist/appointments/:id/approve', verifyToken, (req, res) => {
+  const appointmentId = req.params.id;
+  const psychologistId = req.userId;
+
+  // PostgreSQL sorgusu
+  const query = 'UPDATE appointments SET status = $1 WHERE id = $2 AND psychologist_id = $3';
+
+  // Randevu talebini onayla
+  pool.query(query, ['approved', appointmentId, psychologistId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      if (results.rowCount > 0) {
+        res.status(200).json({ success: true, message: 'Randevu talebi başarıyla onaylandı.' });
+      } else {
+        res.status(404).json({ success: false, message: 'Belirtilen randevu talebi bulunamadı.' });
+      }
+    }
+  });
+});
+
+// Psikologun randevu taleplerini reddetme endpoint'i
+app.patch('/psychologist/appointments/:id/decline', verifyToken, (req, res) => {
+  const appointmentId = req.params.id;
+  const psychologistId = req.userId;
+
+  // PostgreSQL sorgusu
+  const query = 'UPDATE appointments SET status = $1 WHERE id = $2 AND psychologist_id = $3';
+
+  // Randevu talebini iptal et
+  pool.query(query, ['declined', appointmentId, psychologistId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      if (results.rowCount > 0) {
+        res.status(200).json({ success: true, message: 'Randevu talebi başarıyla iptal edildi.' });
+      } else {
+        res.status(404).json({ success: false, message: 'Belirtilen randevu talebi bulunamadı.' });
+      }
+    }
+  });
+});
+
 
 // Diğer endpointleri buraya ekleyebilirsiniz
 
