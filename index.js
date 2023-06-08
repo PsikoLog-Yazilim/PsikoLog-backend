@@ -120,6 +120,24 @@ function createTables() {
     }
   });
 
+  // Bloglar tablosunu oluşturma sorgusu
+  const createBlogTableQuery = `CREATE TABLE IF NOT EXISTS blogs (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    psychologist_id INTEGER NOT NULL,
+    FOREIGN KEY (psychologist_id) REFERENCES psychologists (id) ON DELETE CASCADE
+  )`;
+
+  // Bloglar tablosunu oluştur
+  pool.query(createBlogTableQuery, (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+    } else {
+      console.log('Bloglar tablosu oluşturuldu veya zaten mevcut');
+    }
+  });
+
 }
 
 // JSON veri analizini etkinleştir
@@ -431,6 +449,75 @@ app.get('/psychologist/:id/comments', (req, res) => {
   });
 });
 
+// Psikologun blog yazısı ekleme endpoint
+app.post('/createBlogPost', verifyToken, (req, res) => {
+  const { title, content } = req.body;
+  const psychologist_id = req.userId;
+
+  // PostgreSQL sorgusu
+  const query = 'INSERT INTO blogs (title, content, psychologist_id) VALUES ($1, $2, $3)';
+
+  // Blog yazısını veritabanına ekle
+  pool.query(query, [title, content, psychologist_id], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      res.status(201).json({ success: true, message: 'Blog yazısı başarıyla oluşturuldu.' });
+    }
+  });
+});
+
+// Blog yazısı get endpoint'i
+app.get('/blogPost/:postId', (req, res) => {
+  const { postId } = req.params;
+
+  // PostgreSQL sorgusu
+  const query = `
+  SELECT blogs.*, psychologists.name, psychologists.surname, psychologists.email, psychologists.id AS psychologist_id
+  FROM blogs
+  INNER JOIN psychologists ON blogs.psychologist_id = psychologists.id
+  WHERE blogs.id = $1
+`;
+
+  // Blog yazısını veritabanından getir
+  pool.query(query, [postId], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      if (results.rows.length === 0) {
+        res.status(404).json({ success: false, message: 'Blog yazısı bulunamadı.' });
+      } else {
+        const blogPost = results.rows[0];
+        res.status(200).json({ success: true, blogPost });
+      }
+    }
+  });
+});
+
+// Psikoloğun blog yazilarini getir
+app.get('/blogPosts/:id', (req, res) => {
+  const { id } = req.params;
+
+  // PostgreSQL sorgusu
+  const query = 'SELECT * FROM blogs WHERE psychologist_id = $1';
+
+  // Blog yazısını veritabanından getir
+  pool.query(query, [id], (error, results) => {
+    if (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: 'Bir hata oluştu.' });
+    } else {
+      if (results.rows.length === 0) {
+        res.status(404).json({ success: false, message: 'Blog yazısı bulunamadı.' });
+      } else {
+        const blogPosts = results.rows;
+        res.status(200).json({ success: true, blogPosts });
+      }
+    }
+  });
+});
 
 // Diğer endpointleri buraya ekleyebilirsiniz
 
