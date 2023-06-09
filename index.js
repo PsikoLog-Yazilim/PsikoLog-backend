@@ -18,7 +18,6 @@ function createToken(userId, userType) {
 // Token Doğrula
 function verifyToken(req, res, next) {
   const token = req.headers.authorization.split(' ')[1];
-  console.log("verifyToken: " + token);
 
   if (!token) {
     console.log("Token bulunamadi.");
@@ -31,7 +30,10 @@ function verifyToken(req, res, next) {
       return res.status(401).json({ success: false, message: 'Geçersiz token.' });
     }
 
+    console.log("Decoded: " + decoded.userId + decoded.userType);
+
     req.userId = decoded.userId;
+    req.userType = decoded.userType;
     next();
   });
 }
@@ -135,6 +137,18 @@ function createTables() {
       console.error('Hata:', error);
     } else {
       console.log('Bloglar tablosu oluşturuldu veya zaten mevcut');
+    }
+  });
+
+  // Mesajlar tablosunu oluşturma sorgusu
+  const createMessagesTableQuery = `CREATE TABLE IF NOT EXISTS messages ( id SERIAL PRIMARY KEY, patient_id INTEGER NOT NULL, psychologist_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, message TEXT NOT NULL, timestamp TIMESTAMP DEFAULT NOW(), FOREIGN KEY (patient_id) REFERENCES patients (id) ON DELETE CASCADE, FOREIGN KEY (psychologist_id) REFERENCES psychologists (id) ON DELETE CASCADE );`
+
+  // Mesajlar tablosunu oluştur
+  pool.query(createMessagesTableQuery, (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+    } else {
+      console.log('Mesajlar tablosu oluşturuldu veya zaten mevcut');
     }
   });
 
@@ -415,7 +429,6 @@ app.post('/psychologist/:id/comment', verifyToken, (req, res) => {
   const patientId = req.userId;
   const psychologistId = req.params.id;
   const commentText = req.body.commentText;
-  console.log("comment text: " + commentText);
 
   // PostgreSQL sorgusu
   const query = 'INSERT INTO comments (patient_id, psychologist_id, comment_text) VALUES ($1, $2, $3)';
@@ -518,6 +531,133 @@ app.get('/blogPosts/:id', (req, res) => {
     }
   });
 });
+
+// Mesaj gonder
+app.post('/sendMessage', verifyToken, (req, res) => {
+  const { to, text} = req.body;
+  let patientId;
+  let psychologistId;
+  let senderId;
+
+  if(req.userType === "Patient"){
+    patientId = req.userId;
+    psychologistId = to;
+    senderId = patientId;
+  }
+  else if(req.userType === "Psychologist"){
+    patientId = to;
+    psychologistId = req.userId;
+    senderId = psychologistId;
+  }
+  else{
+    return res.status(400).json({ error: 'Geçersiz kullanıcı türü.' });
+  }
+
+  const sendMessageQuery = `
+    INSERT INTO messages (patient_id, psychologist_id, sender_id, message)
+    VALUES ($1, $2, $3, $4);
+  `;
+
+  pool.query(sendMessageQuery, [patientId, psychologistId, senderId, text], (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+      res.status(500).json({ error: 'Mesaj gönderilemedi.' });
+    } else {
+      res.status(200).json({ success: true, message: "Mesaj başarıyla gönderildi." });
+    }
+  });
+});
+
+// Sohbet geçmişi endpoint
+app.get('/chats/:userId', verifyToken, (req, res) => {
+  let patientId;
+  let psychologistId;
+
+  if (req.userType === "Patient") {
+    patientId = req.userId;
+    psychologistId = req.params.userId;
+  }
+  else if(req.userType === "Psychologist"){
+    patientId = req.params.userId;
+    psychologistId = req.userId;
+  }
+  else{
+    return res.status(400).json({ error: 'Geçersiz kullanıcı türü.' });
+  }
+
+  const getChatHistoryQuery = `
+    SELECT * FROM messages
+    WHERE (patient_id = $1 AND psychologist_id = $2)
+       OR (patient_id = $2 AND psychologist_id = $1)
+    ORDER BY timestamp ASC;
+  `;
+
+  pool.query(getChatHistoryQuery, [patientId, psychologistId], (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+      res.status(500).json({ error: 'Sohbet geçmişi alınamadı.' });
+    } else {
+      const messages = results.rows;
+      res.status(200).json({ success: true, messages });
+    }
+  });
+});
+
+// Mesajlasilan kisiler listesi
+app.get('/participants', verifyToken, (req, res) => {
+  const userId = req.userId;
+  const userType = req.userType;
+
+  console.log("userID: " + userId + " type: " + userType);
+
+  let getParticipantsQuery;
+  let idColumn;
+  let nameColumn;
+  let surnameColumn;
+
+  if (userType === 'Patient') {
+    getParticipantsQuery = `
+      SELECT DISTINCT psychologist_id AS participant_id,
+        psychologists.name AS participant_name,
+        psychologists.surname AS participant_surname
+      FROM messages
+      JOIN psychologists ON messages.psychologist_id = psychologists.id
+      WHERE patient_id = $1;
+    `;
+    idColumn = 'participant_id';
+    nameColumn = 'participant_name';
+    surnameColumn = 'participant_surname';
+  } else if (userType === 'Psychologist') {
+    getParticipantsQuery = `
+      SELECT DISTINCT patient_id AS participant_id,
+        patients.name AS participant_name,
+        patients.surname AS participant_surname
+      FROM messages
+      JOIN patients ON messages.patient_id = patients.id
+      WHERE psychologist_id = $1;
+    `;
+    idColumn = 'participant_id';
+    nameColumn = 'participant_name';
+    surnameColumn = 'participant_surname';
+  } else {
+    return res.status(400).json({ error: 'Geçersiz kullanıcı türü.' });
+  }
+
+  pool.query(getParticipantsQuery, [userId], (error, results) => {
+    if (error) {
+      console.error('Hata:', error);
+      res.status(500).json({ error: 'Katılımcılar alınamadı.' });
+    } else {
+      const participants = results.rows.map((row) => ({
+        id: row[idColumn],
+        name: row[nameColumn],
+        surname: row[surnameColumn],
+      }));
+      res.status(200).json({ success: true, participants });
+    }
+  });
+});
+
 
 // Diğer endpointleri buraya ekleyebilirsiniz
 
